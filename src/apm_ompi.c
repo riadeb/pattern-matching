@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <mpi.h>
+#include <omp.h>
 #define APM_DEBUG 0
 
 char * 
@@ -236,53 +237,50 @@ main( int argc, char ** argv )
   for ( i = 0 ; i < nb_patterns ; i++ )
   {
       int size_pattern = strlen(pattern[i]) ;
-      int * column ;
       int i_buf_size = local_buf_size;
       
       /* Initialize the number of matches to 0 */
       n_matches[i] = 0 ;
-
-      column = (int *)malloc( (size_pattern+1) * sizeof( int ) ) ;
-      if ( column == NULL ) 
-      {
-          fprintf( stderr, "Error: unable to allocate memory for column (%ldB)\n",
-                  (size_pattern+1) * sizeof( int ) ) ;
-          return 1 ;
-      }
-
+      
+      int num_matches = 0;
       /* Traverse the input data up to the end of the file */
       if( rank != 0 )
         i_buf_size = local_buf_size - ( max_pat + 1 - size_pattern );
-      for ( j = 0 ; j < i_buf_size; j++ ) 
+      
+      #pragma omp parallel
       {
-          int distance = 0 ;
-          int size_pat ;
+        int * column = (int *)malloc( (size_pattern+1) * sizeof( int ) ) ;
+        if ( column == NULL ) {
+          fprintf( stderr, "Error: unable to allocate memory for column (%ldB)\n",
+                  (size_pattern+1) * sizeof( int ) ) ;
+          exit( EXIT_FAILURE ) ;
+        } // End if
 
-#if APM_DEBUG
-          if ( j % 100 == 0 )
-          {
-          printf( "Procesing byte %d (out of %d)\n", j, n_bytes ) ;
-          }
-#endif
+        #pragma omp for reduction(+: num_matches)
+        for ( j = 0 ; j < i_buf_size; j++ ){
+            int distance = 0 ;
+            int size_pat ;
 
-          size_pat = size_pattern ;
-          if ( i_buf_size - j < size_pattern )
-          {
-            if( rank == 0 )
-              size_pat = i_buf_size - j ;
-            else 
-              break;
-          }
+            size_pat = size_pattern ;
+            if ( i_buf_size - j < size_pattern )
+            {
+              if( rank == 0 )
+                size_pat = i_buf_size - j ;
+              else 
+                continue;
+            }
 
-          distance = levenshtein( pattern[i], &local_buf[j], size_pat, column ) ;
+            distance = levenshtein( pattern[i], &local_buf[j], size_pat, column ) ;
 
-          if ( distance <= approx_factor ) {
-              n_matches[i]++ ;
-          }
-      }
-
+            if ( distance <= approx_factor ) {
+              num_matches++;
+            } 
+        } // End for each byte
       free( column );
-  }
+    } // End pragma omp parallel
+    
+    n_matches[i] = num_matches;
+  } // End for each pattern
     MPI_Reduce(n_matches, glob_matches, nb_patterns, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
   /* Timer stop */
   

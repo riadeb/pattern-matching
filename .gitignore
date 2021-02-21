@@ -2,3 +2,6 @@
 .DS_Store
 apm
 apm_omp
+apm_mpi
+apm_ompi
+obj/

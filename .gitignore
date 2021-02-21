@@ -5,3 +5,5 @@ apm_omp
 apm_mpi
 apm_ompi
 obj/
+src/apm_ompi_o.c
+dna/chr10.fa

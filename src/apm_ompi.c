@@ -82,6 +82,8 @@ read_input_file( char * filename, int * size )
 
 
 #define MIN3(a, b, c) ((a) < (b) ? ((a) < (c) ? (a) : (c)) : ((b) < (c) ? (b) : (c)))
+#define MIN(a, b) ((a) < (b) ? (a) : (b) )
+
 
 int levenshtein(char *s1, char *s2, int len, int * column) {
     unsigned int x, y, lastdiag, olddiag;
@@ -107,13 +109,13 @@ int levenshtein(char *s1, char *s2, int len, int * column) {
     return(column[len]);
 }
 
-int 
-main( int argc, char ** argv )
+int main( int argc, char ** argv )
 {
   char ** pattern ;
   char * filename ;
   char * local_buf;
   int local_buf_size;
+  int buf_size; //buf size for each process without shadow cells (a part from rank 0)
   int max_pat = 0; // size of the largest Pattern
   int approx_factor = 0 ;
   int nb_patterns = 0 ;
@@ -125,7 +127,7 @@ main( int argc, char ** argv )
   int rank, size;
   MPI_Init (&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);	/* who am i */  
-  MPI_Comm_size(MPI_COMM_WORLD, &size); /* number of processors */ 
+  MPI_Comm_size(MPI_COMM_WORLD, &size); /* number of processes */ 
   /* Check number of arguments */
   if ( argc < 4 ) 
   {
@@ -160,8 +162,9 @@ main( int argc, char ** argv )
   {
       int l ;
       l = strlen(argv[i+3]) ;
+
       if( l > max_pat )
-        max_pat = l - 1;
+        max_pat = l;
       
       if ( l <= 0 ) 
       {
@@ -181,7 +184,7 @@ main( int argc, char ** argv )
   /* Allocate the array of matches */
   n_matches = (int *)malloc( nb_patterns * sizeof( int ) ) ;
   glob_matches = (int *)malloc( nb_patterns * sizeof( int ) ) ;
-  if ( n_matches == NULL )
+  if ( n_matches == NULL || glob_matches == NULL)
   {
       fprintf( stderr, "Error: unable to allocate memory for %ldB\n",
               nb_patterns * sizeof( int ) ) ;
@@ -193,7 +196,6 @@ main( int argc, char ** argv )
   // Reading and distributing the file by Root
   if( rank == 0 ){
     char * buf ;
-    int buf_size;
     printf( "Approximate Pattern Mathing: "
             "looking for %d pattern(s) in file %s w/ distance of %d\n", 
             nb_patterns, filename, approx_factor ) ;
@@ -202,28 +204,32 @@ main( int argc, char ** argv )
     if ( buf == NULL ) return 1 ;
     
     buf_size = n_bytes / size;
-    if (n_bytes % size ) buf_size++;
+    //if (n_bytes % size ) buf_size++; Why ??
 
     // Sending size of the local_buf to each Proc
     for (int to = 1; to < size; to++)
-      MPI_Send(&buf_size,1, MPI_INT, to, 0, MPI_COMM_WORLD);
+      MPI_Send(&n_bytes,1, MPI_INT, to, 0, MPI_COMM_WORLD);
     
     local_buf_size = n_bytes - buf_size*( size - 1);
     local_buf = (char *)malloc(sizeof(char)*(local_buf_size));
     strncpy(local_buf, &( buf[ buf_size*( size - 1) ] ), local_buf_size );
     
     // Sending the part of the data to each Proc
-    for (int to = 1; to < size; to++)
-      MPI_Send(&(buf[(to-1)*buf_size]), (buf_size+max_pat), MPI_CHAR, to, 1, MPI_COMM_WORLD);
-
+    for (int to = 1; to < size; to++){
+        int start = (to-1)*buf_size;
+        int end = MIN(to*buf_size + max_pat - 1, n_bytes);
+        MPI_Send(&buf[start], end - start, MPI_CHAR, to, 1, MPI_COMM_WORLD);
+    }
+    buf_size = local_buf_size; //only change after data is sent
     free(buf);
-    gettimeofday(&t1, NULL);
-
   }
   // The rest should receive his part of data
   else{
-    MPI_Recv(&local_buf_size, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, NULL);
-    local_buf_size += max_pat;
+    MPI_Recv(&n_bytes, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, NULL);
+    buf_size = n_bytes / size;
+    int start = (rank-1)*buf_size;
+    int end = MIN(rank*buf_size + max_pat - 1, n_bytes);
+    local_buf_size = end - start;
     local_buf = (char *)malloc(sizeof(char)*local_buf_size);
     MPI_Recv(local_buf, local_buf_size, MPI_CHAR, 0, 1, MPI_COMM_WORLD, NULL);
   }
@@ -232,55 +238,56 @@ main( int argc, char ** argv )
    ******/
 
   /* Timer start */
+  if (rank == 0 ) gettimeofday(&t1, NULL);
 
   /* Check each pattern one by one */
   for ( i = 0 ; i < nb_patterns ; i++ )
   {
-      int size_pattern = strlen(pattern[i]) ;
-      int i_buf_size = local_buf_size;
+        int size_pattern = strlen(pattern[i]) ;
       
       /* Initialize the number of matches to 0 */
-      n_matches[i] = 0 ;
-      
-      int num_matches = 0;
-      /* Traverse the input data up to the end of the file */
-      if( rank != 0 )
-        i_buf_size = local_buf_size - ( max_pat + 1 - size_pattern );
-      
-      #pragma omp parallel
+        n_matches[i] = 0 ;
+        int num_matches = 0;
+
+     
+        #pragma omp parallel
       {
-        int * column = (int *)malloc( (size_pattern+1) * sizeof( int ) ) ;
-        if ( column == NULL ) {
-          fprintf( stderr, "Error: unable to allocate memory for column (%ldB)\n",
-                  (size_pattern+1) * sizeof( int ) ) ;
-          exit( EXIT_FAILURE ) ;
-        } // End if
-
-        #pragma omp for reduction(+: num_matches)
-        for ( j = 0 ; j < i_buf_size; j++ ){
-            int distance = 0 ;
-            int size_pat ;
-
-            size_pat = size_pattern ;
-            if ( i_buf_size - j < size_pattern )
+            int * column = (int *)malloc( (size_pattern+1) * sizeof( int ) ) ;
+            if ( column == NULL ) {
+            fprintf( stderr, "Error: unable to allocate memory for column (%ldB)\n",
+                    (size_pattern+1) * sizeof( int ) ) ;
+            exit( EXIT_FAILURE ) ;
+            } // End if
+            #pragma omp for reduction(+: num_matches) schedule(guided)
+            for ( j = 0 ; j < buf_size; j++ ) 
             {
-              if( rank == 0 )
-                size_pat = i_buf_size - j ;
-              else 
-                continue;
-            }
+                int distance = 0 ;
+                int size_pat ;
 
-            distance = levenshtein( pattern[i], &local_buf[j], size_pat, column ) ;
+        #if APM_DEBUG
+                if ( j % 100 == 0 )
+                {
+                printf( "Procesing byte %d (out of %d)\n", j, n_bytes ) ;
+                }
+        #endif
 
-            if ( distance <= approx_factor ) {
-              num_matches++;
-            } 
-        } // End for each byte
-      free( column );
-    } // End pragma omp parallel
-    
+                size_pat = size_pattern ;
+                if ( local_buf_size < j + size_pattern )
+                {
+                    size_pat = local_buf_size - j ;
+                }
+
+                distance = levenshtein( pattern[i], &local_buf[j], size_pat, column ) ;
+
+                if ( distance <= approx_factor ) {
+                    num_matches++;
+                    
+                }
+            }// end for loop
+        free( column );
+      }//end pragma omp
     n_matches[i] = num_matches;
-  } // End for each pattern
+  }
     MPI_Reduce(n_matches, glob_matches, nb_patterns, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
   /* Timer stop */
   

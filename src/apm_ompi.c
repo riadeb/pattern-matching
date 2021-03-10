@@ -128,6 +128,7 @@ int main( int argc, char ** argv )
   MPI_Init (&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);	/* who am i */  
   MPI_Comm_size(MPI_COMM_WORLD, &size); /* number of processes */ 
+  
   /* Check number of arguments */
   if ( argc < 4 ) 
   {

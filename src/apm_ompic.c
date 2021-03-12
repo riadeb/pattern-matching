@@ -113,8 +113,8 @@
 
 char* cuda_malloc_cp(char *buf, int size);
 int* cuda_malloc(int size);
-int finalcudaCall(char* cpattern,char * cbuf, int n_bytes, int size_pattern, int approx_factor, int * results_th , int  nth_b,int nblock);
-void kernelCall(char* cpattern,char * cbuf, int n_bytes, int size_pattern, int approx_factor, int * results_th , int  nth_b,int nblock);
+int  finalcudaCall(char* cpattern,char * cbuf, int cuda_end, int * results_th , int  nth_b,int nblock);
+void kernelCall(char* cpattern,char * cbuf,int cuda_end ,int n_bytes, int size_pattern, int approx_factor, int * results_th , int  nth_b,int nblock);
 
  int main( int argc, char ** argv )
  {
@@ -245,7 +245,7 @@ void kernelCall(char* cpattern,char * cbuf, int n_bytes, int size_pattern, int a
    //Send data to gpu
     char * cbuf;
     cbuf = cuda_malloc_cp(local_buf, local_buf_size* sizeof(char));
-    int nblock = 10;
+    int nblock = 90;
     int nth_b = 1000;
     int nth = nblock*nth_b;
     int * results_th;
@@ -273,13 +273,13 @@ void kernelCall(char* cpattern,char * cbuf, int n_bytes, int size_pattern, int a
          cpattern =  cuda_malloc_cp(pattern[i],size_pattern* sizeof(char));
 
         int cuda_start = 0;
-        int cuda_end = 3*buf_size/4;
-        kernelCall(cpattern,cbuf,cuda_end,size_pattern,approx_factor,results_th, nth_b,nblock);
+        int cuda_end = 2*buf_size/3;
+        kernelCall(cpattern,cbuf,cuda_end,local_buf_size,size_pattern,approx_factor,results_th, nth_b,nblock);
         int num_matches_cuda;
 
          #pragma omp parallel
        {
-               printf("statt\n");
+             //  printf("statt, rank %d\n", rank);
              int * column = (int *)malloc( (size_pattern+1) * sizeof( int ) ) ;
              if ( column == NULL ) {
              fprintf( stderr, "Error: unable to allocate memory for column (%ldB)\n",
@@ -314,7 +314,7 @@ void kernelCall(char* cpattern,char * cbuf, int n_bytes, int size_pattern, int a
              }// end for loop
          free( column );
          #pragma omp single nowait
-               num_matches_cuda =  finalcudaCall(cpattern,cbuf,cuda_end,size_pattern,approx_factor,results_th, nth_b,nblock);
+               num_matches_cuda =  finalcudaCall(cpattern,cbuf,cuda_end,results_th, nth_b,nblock);
        }//end pragma omp
 
         n_matches[i] = num_matches + num_matches_cuda;

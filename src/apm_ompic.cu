@@ -28,15 +28,17 @@ int * results_th ;
     }  
  }
 
-__global__ void compMatches(char* pattern,char * buf, int n_bytes, int size_pattern, int approx_factor, int * resultsth){
+__global__ void compMatches(char* pattern,char * buf,int cuda_end ,int n_bytes, int size_pattern, int approx_factor, int * resultsth){
+   
     int distance = 0 ;
      int size ;
      int i = threadIdx.x + blockIdx.x*blockDim.x;
      int n_th = gridDim.x*blockDim.x;
      resultsth[i] = 0;
-       if(i < n_bytes){
+     if(i == 0)     printf("cuda started \n");
+       if(i < cuda_end){
         int * column = (int *)malloc( (size_pattern+1) * sizeof( int ) ) ;
-           for(int j = i; j < n_bytes; j += n_th){
+           for(int j = i; j < cuda_end; j += n_th){
                size = size_pattern ;
                if ( n_bytes - j < size_pattern )
                {
@@ -70,24 +72,23 @@ __global__ void compMatches(char* pattern,char * buf, int n_bytes, int size_patt
          }
        }
 }
-extern "C" void kernelCall(char* cpattern,char * cbuf, int n_bytes, int size_pattern, int approx_factor, int * results_th , int  nth_b,int nblock){
+extern "C" void kernelCall(char* cpattern,char * cbuf,int cuda_end ,int n_bytes, int size_pattern, int approx_factor, int * results_th , int  nth_b,int nblock){
 
-    compMatches<<<nblock, nth_b>>>(cpattern,cbuf,n_bytes,size_pattern,approx_factor,results_th);
-    printf("cuda started");
+    compMatches<<<nblock, nth_b>>>(cpattern,cbuf,cuda_end,n_bytes,size_pattern,approx_factor,results_th);
     CHECK(cudaGetLastError());
 }
-extern "C" int  finalcudaCall(char* cpattern,char * cbuf, int n_bytes, int size_pattern, int approx_factor, int * results_th , int  nth_b,int nblock){
+extern "C" int  finalcudaCall(char* cpattern,char * cbuf, int cuda_end, int * results_th , int  nth_b,int nblock){
     int * results;
     int nth = nth_b*nblock;
     results = (int *)malloc(nth* sizeof(int));
     CHECK(cudaDeviceSynchronize());
+   printf("cuda done\n");
     CHECK(cudaMemcpy(results,results_th, nth* sizeof(int), cudaMemcpyDeviceToHost));
 
     int res = 0;
-    for(int j = 0; j < nth && j < n_bytes; j++){
+    for(int j = 0; j < nth && j < cuda_end; j++){
         res += results[j];
     }
-    printf("cuda done\n");
     return res;
 }
 

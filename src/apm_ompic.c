@@ -115,7 +115,7 @@
 char* cuda_malloc_cp(char *buf, int size);
 int* cuda_malloc(int size);
 int  finalcudaCall(char* cpattern,char * cbuf, int cuda_end, int * results_th , int  nth_b,int nblock);
-void kernelCall(char* cpattern,char * cbuf,int cuda_end ,int n_bytes, int size_pattern, int approx_factor, int * results_th , int  nth_b,int nblock);
+ void kernelCall(char * cpattern, char * cbuf, int cuda_end, int n_bytes, int size_pattern, int approx_factor, int * results_th,int * column_th, int nth_b, int nblock, int max_pat);
 void AssignDevices(int rank);
 void cuda_free( void *buf );
 
@@ -242,13 +242,16 @@ int main( int argc, char ** argv ){
   // Send data to gpu
   char * cbuf;
   AssignDevices(rank);
+  checkGpuMem(rank);
   cbuf = cuda_malloc_cp(local_buf, local_buf_size* sizeof(char));
-  int nblock = 90;
-  int nth_b = 1000;
+  printf("loal buf size for rank %d is %f\n",rank, (local_buf_size* sizeof(char))/1048576.0);
+  int nblock = 10000;
+  int nth_b = 1024;
   int nth = nblock*nth_b;
   int * results_th;
   results_th = cuda_malloc(nth* sizeof(int));
-
+  int * column_th = cuda_malloc(nth * (max_pat + 1) * sizeof(int));
+  printf("col size for rank %d is %f\n",rank, (nth * (max_pat + 1) * sizeof(int) + (max_pat* sizeof(char)))/1048576.0);
   /*************************** BEGIN MAIN LOOP ***************************************/
  
   /* Calculation is starting */
@@ -267,9 +270,10 @@ int main( int argc, char ** argv ){
     int cuda_end = 1*buf_size/2;
     
     //Send pattern to GPU
+    checkGpuMem(rank);
     cpattern =  cuda_malloc_cp(pattern[i],size_pattern* sizeof(char));
-    kernelCall(cpattern,cbuf,cuda_end,local_buf_size,size_pattern,approx_factor,results_th, nth_b,nblock);
-    
+    checkGpuMem(rank);
+    kernelCall(cpattern,cbuf,cuda_end,local_buf_size,size_pattern,approx_factor,results_th,column_th ,nth_b,nblock, max_pat);
     #pragma omp parallel
     {
       //  printf("statt, rank %d\n", rank);
@@ -308,6 +312,7 @@ int main( int argc, char ** argv ){
         num_matches_cuda =  finalcudaCall(cpattern,cbuf,cuda_end,results_th, nth_b,nblock);
 
     }//END pragma omp
+    checkGpuMem(rank);
     n_matches[i] = num_matches + num_matches_cuda;
 
   } // END for i 
@@ -318,7 +323,7 @@ int main( int argc, char ** argv ){
   if( rank == 0 ){
   
     gettimeofday(&t2, NULL);  // Timer Stop  
-    printf( "\nAPM transfer done in %lf s\nAPM calculation done in %lf s\n\n", DIFFTEMPS(t0,t1), DIFFTEMPS(t1,t2) ) ;
+    printf( "\nAPM transfer done in %lf s\nAPM calculation done in %lf s\nTotal time : %lf s\n\n", DIFFTEMPS(t0,t1), DIFFTEMPS(t1,t2), DIFFTEMPS(t0,t2)) ;
 
     for ( i = 0 ; i < nb_patterns ; i++ )
       printf( "Number of matches for pattern <%s>: %d\n", pattern[i], glob_matches[i] ) ;

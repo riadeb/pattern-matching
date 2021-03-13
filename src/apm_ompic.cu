@@ -27,7 +27,7 @@
  } while (0)
   
   // Kernel function for calculation the levenshtein function
- __global__ void compMatches(char * pattern, char * buf, int cuda_end, int n_bytes, int size_pattern, int approx_factor, int * resultsth) {
+ __global__ void compMatches(char * pattern, char * buf, int cuda_end, int n_bytes, int size_pattern, int approx_factor, int * resultsth, int * column_th, int max_pat) {
  
    int distance = 0;
    int size;
@@ -36,7 +36,8 @@
    resultsth[i] = 0;
    //  if (i == 0) printf("cuda started \n");
    if (i < cuda_end) {
-     int * column = (int * ) malloc((size_pattern + 1) * sizeof(int));
+     //int * column = (int * ) malloc((size_pattern + 1) * sizeof(int));
+     int * column = column_th + i*(max_pat+1);
      for (int j = i; j < cuda_end; j += n_th) {
        size = size_pattern;
        if (n_bytes - j < size_pattern) 
@@ -75,8 +76,8 @@
  
  // Function for calling cuda kernel function
  extern "C"
- void kernelCall(char * cpattern, char * cbuf, int cuda_end, int n_bytes, int size_pattern, int approx_factor, int * results_th, int nth_b, int nblock) {
-   compMatches << < nblock, nth_b >>> (cpattern, cbuf, cuda_end, n_bytes, size_pattern, approx_factor, results_th);
+ void kernelCall(char * cpattern, char * cbuf, int cuda_end, int n_bytes, int size_pattern, int approx_factor, int * results_th,int * column_th, int nth_b, int nblock, int max_pat) {
+   compMatches << < nblock, nth_b >>> (cpattern, cbuf, cuda_end, n_bytes, size_pattern, approx_factor, results_th, column_th, max_pat);
    CHECK(cudaGetLastError());
  }
  
@@ -129,4 +130,18 @@
    CHECK(cudaGetDeviceCount( & nbGPU));
    CHECK(cudaSetDevice(rank % nbGPU));
  }
+
+//Prints info about GPU memory
+extern "C"
+void checkGpuMem(int rank)
+{
+  float free_m,total_m,used_m;
+  size_t free_t,total_t;
+  cudaMemGetInfo(&free_t,&total_t);
+  free_m =(uint)free_t/1048576.0 ;
+  total_m=(uint)total_t/1048576.0;
+  used_m=total_m-free_m;
+
+  printf ( "  meem free %d .... %f MB mem total %d....%f MB mem used %f MB, rank %d\n",free_t,free_m,total_t,total_m,used_m,rank);
+}
  

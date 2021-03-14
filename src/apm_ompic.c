@@ -300,7 +300,7 @@ int main( int argc, char ** argv ){
     kernelCall(cpattern,cbuf,cuda_end,local_buf_size,size_pattern,approx_factor,results_th,column_th ,nth_b,nblock, max_pat);
     int * results; //to hold cuda results
     results = (int * ) malloc(nth * sizeof(int));
-    #pragma omp parallel num_threads(4)
+    #pragma omp parallel
     {
       int size_omp = omp_get_num_threads();
       int * column = (int *)malloc( (size_pattern+1) * sizeof( int ) ) ;

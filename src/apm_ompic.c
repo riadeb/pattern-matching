@@ -257,6 +257,7 @@ int main( int argc, char ** argv ){
   }
 
   // Send data to gpu
+  AssignDevices(rank);
   int nth_b = 1024;
   size_t fm = freeMem();
   double nth_max = (fm/(double)size - buf_size*sizeof(char))/((max_pat + 1.0) * sizeof(int));
@@ -264,7 +265,6 @@ int main( int argc, char ** argv ){
   MPI_Barrier(MPI_COMM_WORLD);
   
   char * cbuf;
-  AssignDevices(rank);
   checkGpuMem(rank);
   cbuf = cuda_malloc_cp(local_buf, local_buf_size* sizeof(char));
   //printf("local buf size for rank %d is %f\n",rank, (local_buf_size* sizeof(char))/1048576.0);

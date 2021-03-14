@@ -11,6 +11,9 @@
  #include <sys/time.h>
  #include <mpi.h>
  #include <omp.h>
+ 
+  #define MIN(a, b) ((a) < (b) ? (a) : (b) )
+
 
  // MACRO for calculating the time
  #define DIFFTEMPS(a,b) (((b).tv_sec - (a).tv_sec) + ((b).tv_usec - (a).tv_usec)/1000000.)
@@ -114,12 +117,15 @@
 
 char* cuda_malloc_cp(char *buf, int size);
 int* cuda_malloc(int size);
-int  finalcudaCall(char* cpattern,char * cbuf, int cuda_end, int * results_th , int  nth_b,int nblock);
+int  finalcudaCall(char* cpattern,char * cbuf, int cuda_end, int * results_th ,int * results, int  nth_b,int nblock);
  void kernelCall(char * cpattern, char * cbuf, int cuda_end, int n_bytes, int size_pattern, int approx_factor, int * results_th,int * column_th, int nth_b, int nblock, int max_pat);
 void AssignDevices(int rank);
 void cuda_free( void *buf );
 
 int main( int argc, char ** argv ){
+   //for profiling purposes
+
+
   char ** pattern ;
   char * filename ;
   char * local_buf;
@@ -133,11 +139,13 @@ int main( int argc, char ** argv ){
   int n_bytes ;
   int * n_matches, *glob_matches ;
   int rank, size;
+  int omp_threads;
+  
 
   MPI_Init (&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);	/* who am i */  
   MPI_Comm_size(MPI_COMM_WORLD, &size); /* number of processes */ 
-   
+  
    /* Check number of arguments */
   if ( argc < 4 ){
     if(rank == 0 )
@@ -157,6 +165,12 @@ int main( int argc, char ** argv ){
    /* Get the number of patterns that the user wants to search for */
   nb_patterns = argc - 3 ;
 
+  //nb_patterns = 1; //For debugging, remove it !!!!
+  double ratio = 0.5;
+  //if(argc > 4){
+   // ratio = strtod(argv[4],NULL);
+ // }
+
    /* Fill the pattern array */
   pattern = (char **)malloc( nb_patterns * sizeof( char * ) ) ;
   if ( pattern == NULL ){
@@ -166,6 +180,9 @@ int main( int argc, char ** argv ){
     return 1 ;
   }
  
+
+
+   
    /* Grab the patterns */
   for ( i = 0 ; i < nb_patterns ; i++ ){
       int l = strlen(argv[i+3]) ;
@@ -240,18 +257,25 @@ int main( int argc, char ** argv ){
   }
 
   // Send data to gpu
+  int nth_b = 1024;
+  size_t fm = freeMem();
+  double nth_max = (fm/(double)size - buf_size*sizeof(char))/((max_pat + 1.0) * sizeof(int));
+  int nblock_max = nth_max/nth_b;
+  MPI_Barrier(MPI_COMM_WORLD);
+  
   char * cbuf;
   AssignDevices(rank);
   checkGpuMem(rank);
   cbuf = cuda_malloc_cp(local_buf, local_buf_size* sizeof(char));
-  printf("loal buf size for rank %d is %f\n",rank, (local_buf_size* sizeof(char))/1048576.0);
-  int nblock = 10000;
-  int nth_b = 1024;
+  //printf("local buf size for rank %d is %f\n",rank, (local_buf_size* sizeof(char))/1048576.0);
+ // int nblock_max = nth_max/nth_b;
+  //int nblock = 5912;
+  int nblock = nblock_max;
   int nth = nblock*nth_b;
   int * results_th;
   results_th = cuda_malloc(nth* sizeof(int));
   int * column_th = cuda_malloc(nth * (max_pat + 1) * sizeof(int));
-  printf("col size for rank %d is %f\n",rank, (nth * (max_pat + 1) * sizeof(int) + (max_pat* sizeof(char)))/1048576.0);
+  //printf("col size for rank %d is %f\n",rank, (nth * (max_pat + 1) * sizeof(int) + (max_pat* sizeof(char)))/1048576.0);
   /*************************** BEGIN MAIN LOOP ***************************************/
  
   /* Calculation is starting */
@@ -264,19 +288,21 @@ int main( int argc, char ** argv ){
     n_matches[i] = 0 ;
   
     int size_pattern = strlen(pattern[i]) ;
-    int num_matches_cuda;
+    int num_matches_cuda = 0;
     char * cpattern;
     int num_matches = 0;
-    int cuda_end = 1*buf_size/2;
+    int cuda_end = ratio*buf_size;
     
     //Send pattern to GPU
     checkGpuMem(rank);
     cpattern =  cuda_malloc_cp(pattern[i],size_pattern* sizeof(char));
     checkGpuMem(rank);
     kernelCall(cpattern,cbuf,cuda_end,local_buf_size,size_pattern,approx_factor,results_th,column_th ,nth_b,nblock, max_pat);
-    #pragma omp parallel
+    int * results; //to hold cuda results
+    results = (int * ) malloc(nth * sizeof(int));
+    #pragma omp parallel num_threads(4)
     {
-      //  printf("statt, rank %d\n", rank);
+      int size_omp = omp_get_num_threads();
       int * column = (int *)malloc( (size_pattern+1) * sizeof( int ) ) ;
 
       if ( column == NULL ) {
@@ -285,7 +311,7 @@ int main( int argc, char ** argv ){
         exit( EXIT_FAILURE ) ;
       } // End if
 
-      #pragma omp for reduction(+: num_matches) schedule(guided)
+      #pragma omp for reduction(+: num_matches) schedule(guided) nowait
       for ( j = cuda_end ; j < buf_size; j++ ){
         int distance = 0 ;
         int size_pat ;
@@ -306,13 +332,17 @@ int main( int argc, char ** argv ){
         #endif
 
       }// END for j
+      #pragma omp single
+       finalcudaCall(cpattern,cbuf,cuda_end,results_th, results,nth_b,nblock);
+      #pragma omp for reduction(+: num_matches_cuda) schedule(guided) nowait
+      for (j = 0; j <MIN(cuda_end,nth); j++) {
+            num_matches_cuda += results[j];
+      }
       free( column );
-
-      #pragma omp single nowait
-        num_matches_cuda =  finalcudaCall(cpattern,cbuf,cuda_end,results_th, nth_b,nblock);
-
     }//END pragma omp
     checkGpuMem(rank);
+    cuda_free(cpattern);
+    free(results);
     n_matches[i] = num_matches + num_matches_cuda;
 
   } // END for i 
@@ -333,7 +363,11 @@ int main( int argc, char ** argv ){
   cuda_free( (void *)cbuf );
   cuda_free( (void *)results_th);
 
-  MPI_Finalize();
+     MPI_Finalize();
+
+     //FILE * fp = fopen("N1_n1_omp4_ratio_10_patt_44.dat","a");
+     //fprintf(fp,"%f %f %d %d %d\n", ratio, DIFFTEMPS(t0,t2), omp_threads, nth, n_bytes);
+    
  
   return 0 ;
 }// END main

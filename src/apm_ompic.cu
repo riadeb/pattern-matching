@@ -83,22 +83,22 @@
  
  // Function for Synchronizing cuda kernel function and freeing the buffers
  extern "C"
- int finalcudaCall(char * cpattern, char * cbuf, int cuda_end, int * results_th, int nth_b, int nblock) {
-   int * results;
+ int finalcudaCall(char * cpattern, char * cbuf, int cuda_end, int * results_th,int * results, int nth_b, int nblock) {
+  // int * results;
    int nth = nth_b * nblock;
-   results = (int * ) malloc(nth * sizeof(int));
+   //results = (int * ) malloc(nth * sizeof(int));
    CHECK(cudaDeviceSynchronize());
    //  printf("cuda done\n");
    CHECK(cudaMemcpy(results, results_th, nth * sizeof(int), cudaMemcpyDeviceToHost));
  
-   int res = 0;
-   for (int j = 0; j < nth && j < cuda_end; j++) {
-     res += results[j];
-   }
-   free(results);
-   CHECK(cudaFree(cpattern));
+   //int res = 0;
+   //for (int j = 0; j < nth && j < cuda_end; j++) {
+     //res += results[j];
+   //}
+  // free(results);
+  // CHECK(cudaFree(cpattern));
  
-   return res;
+   return 0;
  }
  
  // Function for making cudaMalloc and cudaMemcpy from host
@@ -142,6 +142,15 @@ void checkGpuMem(int rank)
   total_m=(uint)total_t/1048576.0;
   used_m=total_m-free_m;
 
-  printf ( "  meem free %d .... %f MB mem total %d....%f MB mem used %f MB, rank %d\n",free_t,free_m,total_t,total_m,used_m,rank);
+//  printf ( "  meem free %d .... %f MB mem total %d....%f MB mem used %f MB, rank %d\n",free_t,free_m,total_t,total_m,used_m,rank);
+}
+extern "C"
+size_t freeMem()
+{
+  float free_m,total_m,used_m;
+  size_t free_t,total_t;
+  cudaMemGetInfo(&free_t,&total_t);
+  free_m =(uint)free_t/1048576.0 ;
+  return (free_t);
 }
  
